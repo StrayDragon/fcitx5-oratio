@@ -2,9 +2,9 @@
 Name=Oratio
 Category=Module
 Version=@PROJECT_VERSION@
-Library=oratio
+Library=liboratio
 Type=SharedLibrary
-OnDemand=True
+OnDemand=False
 Configurable=True
 
 [Addon/Dependencies]

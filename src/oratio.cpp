@@ -10,6 +10,7 @@
 #include <memory>
 #include <sstream>
 #include <array>
+#include <format>
 
 #include "fcitx-utils/capabilityflags.h"
 #include "fcitx-utils/inputbuffer.h"
@@ -63,26 +64,30 @@ public:
 
 class OratioCandidateWord : public CandidateWord {
 public:
-    OratioCandidateWord(Oratio *q, const std::string &result, int index)
-        : q_(q), result_(result), index_(index) {
+    OratioCandidateWord(Oratio *q, const std::string &content, int displayIndex,
+                        bool isCommand)
+        : q_(q), isCommand_(isCommand) {
         Text text;
-        if (index == 0) {
-            text.append("[" + std::to_string(index + 1) + "] " + "Execute: " + result);
+        if (isCommand) {
+            text.append(std::format("[{}] Execute: ", displayIndex));
+            text.append(content);
         } else {
-            text.append("[" + std::to_string(index + 1) + "] " + result);
+            text.append(std::format("[{}] ", displayIndex));
+            text.append(content);
         }
         setText(std::move(text));
     }
 
     void select(InputContext *inputContext) const override {
-        if (index_ == 0) {
+        if (isCommand_) {
             // 执行命令
             auto *state = inputContext->propertyFor(&q_->factory());
             state->mode_ = OratioMode::Executing;
             q_->updateUI(inputContext);
 
             // 同步执行命令（简化实现）
-            std::string result = executeCommand(result_);
+            std::string result =
+                executeCommand(std::string(text().stringAt(1)));
 
             if (!result.empty()) {
                 state->results_ = splitOutput(result);
@@ -93,7 +98,7 @@ public:
             }
         } else {
             // 提交结果
-            inputContext->commitString(result_);
+            inputContext->commitString(text().stringAt(1));
             auto *state = inputContext->propertyFor(&q_->factory());
             state->reset(inputContext);
         }
@@ -101,18 +106,15 @@ public:
 
 private:
     std::string executeCommand(const std::string &command) const {
-        std::array<char, 128> buffer;
         std::string result;
-
-        auto pipe = popen(command.c_str(), "r");
+        FILE *pipe = popen(command.c_str(), "r");
         if (!pipe) {
             return "";
         }
-
-        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-            result += buffer.data();
+        int c;
+        while ((c = fgetc(pipe)) != EOF) {
+            result += static_cast<char>(c);
         }
-
         pclose(pipe);
         return result;
     }
@@ -132,8 +134,7 @@ private:
     }
 
     Oratio *q_;
-    std::string result_;
-    int index_;
+    bool isCommand_;
 };
 
 Oratio::Oratio(Instance *instance)
@@ -250,49 +251,52 @@ void Oratio::handleKeyEvent(KeyEvent &keyEvent) {
             return;
         }
 
-        // 处理翻页
         if (keyEvent.key().checkKeyList(
                 instance_->globalConfig().defaultPrevPage())) {
-            auto *pageable = candidateList->toPageable();
-            if (!pageable->hasPrev()) {
-                if (pageable->usedNextBefore()) {
+            if (auto *pageable = candidateList->toPageable()) {
+                if (pageable->hasPrev()) {
                     keyEvent.accept();
-                    return;
+                    pageable->prev();
+                    inputContext->updateUserInterface(
+                        UserInterfaceComponent::InputPanel);
                 }
-            } else {
-                keyEvent.accept();
-                pageable->prev();
-                inputContext->updateUserInterface(UserInterfaceComponent::InputPanel);
-                return;
             }
+            return;
         }
 
         if (keyEvent.key().checkKeyList(
                 instance_->globalConfig().defaultNextPage())) {
-            keyEvent.filterAndAccept();
-            candidateList->toPageable()->next();
-            inputContext->updateUserInterface(UserInterfaceComponent::InputPanel);
+            if (auto *pageable = candidateList->toPageable()) {
+                if (pageable->hasNext()) {
+                    keyEvent.filterAndAccept();
+                    pageable->next();
+                    inputContext->updateUserInterface(
+                        UserInterfaceComponent::InputPanel);
+                }
+            }
             return;
         }
 
-        // 处理候选项导航
-        if (keyEvent.key().checkKeyList(
-                instance_->globalConfig().defaultPrevCandidate())) {
-            keyEvent.filterAndAccept();
-            candidateList->toCursorMovable()->prevCandidate();
-            inputContext->updateUserInterface(UserInterfaceComponent::InputPanel);
-            return;
+        if (auto *cursorMovable = candidateList->toCursorMovable()) {
+            if (keyEvent.key().checkKeyList(
+                    instance_->globalConfig().defaultPrevCandidate())) {
+                keyEvent.filterAndAccept();
+                cursorMovable->prevCandidate();
+                inputContext->updateUserInterface(
+                    UserInterfaceComponent::InputPanel);
+                return;
+            }
+
+            if (keyEvent.key().checkKeyList(
+                    instance_->globalConfig().defaultNextCandidate())) {
+                keyEvent.filterAndAccept();
+                cursorMovable->nextCandidate();
+                inputContext->updateUserInterface(
+                    UserInterfaceComponent::InputPanel);
+                return;
+            }
         }
 
-        if (keyEvent.key().checkKeyList(
-                instance_->globalConfig().defaultNextCandidate())) {
-            keyEvent.filterAndAccept();
-            candidateList->toCursorMovable()->nextCandidate();
-            inputContext->updateUserInterface(UserInterfaceComponent::InputPanel);
-            return;
-        }
-
-        // 处理回车
         if (keyEvent.key().check(FcitxKey_Return) ||
             keyEvent.key().check(FcitxKey_KP_Enter)) {
             keyEvent.accept();
@@ -304,14 +308,11 @@ void Oratio::handleKeyEvent(KeyEvent &keyEvent) {
         }
     }
 
-    // 处理修饰键
     if (keyEvent.key().isModifier() || keyEvent.key().hasModifier()) {
         return;
     }
-
     keyEvent.accept();
 
-    // 处理ESC键
     if (keyEvent.key().check(FcitxKey_Escape)) {
         state->reset(inputContext);
         return;
@@ -320,38 +321,48 @@ void Oratio::handleKeyEvent(KeyEvent &keyEvent) {
 
 void Oratio::updateUI(InputContext *inputContext, bool trigger) {
     auto *state = inputContext->propertyFor(&factory_);
-    inputContext->inputPanel().reset();
+    auto *inputPanel = &inputContext->inputPanel();
+
+    inputPanel->reset();
+
+    auto setAux = [&](const std::string &aux) {
+        Text text(aux);
+        inputPanel->setAuxUp(text);
+    };
 
     if (state->mode_ == OratioMode::Executing) {
-        Text auxUp("Oratio: Executing command...");
-        inputContext->inputPanel().setAuxUp(auxUp);
+        setAux("Executing...");
+        inputContext->updateUserInterface(UserInterfaceComponent::InputPanel);
+        return;
+    }
 
-    } else if (state->mode_ == OratioMode::ShowingResults) {
+    if (state->mode_ == OratioMode::ShowingResults) {
         auto candidateList = std::make_unique<CommonCandidateList>();
-        candidateList->setPageSize(instance_->globalConfig().defaultPageSize());
+        candidateList->setPageSize(10);
 
-        int maxCandidates = 10;
-        int count = 0;
-
-        for (size_t i = 0; i < state->results_.size() && count < maxCandidates; ++i) {
-            candidateList->append<OratioCandidateWord>(this, state->results_[i], i);
-            count++;
+        if (trigger) {
+            candidateList->append<OratioCandidateWord>(this, state->results_[0], 1,
+                                                      true);
+        } else {
+            int index = 0;
+            const int maxCandidates = 10;
+            for (const auto &line : state->results_) {
+                if (index >= maxCandidates) {
+                    break;
+                }
+                candidateList->append<OratioCandidateWord>(this, line, index + 1,
+                                                          false);
+                index++;
+            }
         }
 
         if (!candidateList->empty()) {
             candidateList->setGlobalCursorIndex(0);
         }
+
         candidateList->setSelectionKey(selectionKeys_);
         candidateList->setLayoutHint(CandidateLayoutHint::Vertical);
-        inputContext->inputPanel().setCandidateList(std::move(candidateList));
-
-        Text auxUp;
-        if (trigger) {
-            auxUp.append("Oratio: Select command or result");
-        } else {
-            auxUp.append("Oratio: Command results");
-        }
-        inputContext->inputPanel().setAuxUp(auxUp);
+        inputPanel->setCandidateList(std::move(candidateList));
     }
 
     inputContext->updatePreedit();
