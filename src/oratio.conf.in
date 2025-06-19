@@ -1,0 +1,3 @@
+[OratioConfig]
+Command=/home/l8ng/Kits/Apps/funasr/samples/rust/sample/target/release/rust_audio_client run --with-auto-input
+TriggerKey=Control+Shift+Alt+E

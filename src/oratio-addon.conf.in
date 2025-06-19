@@ -1,0 +1,14 @@
+[Addon]
+Name=Oratio
+Category=Module
+Version=@PROJECT_VERSION@
+Library=oratio
+Type=SharedLibrary
+OnDemand=True
+Configurable=True
+
+[Addon/Dependencies]
+0=core:@PROJECT_VERSION@
+
+[Addon/OptionalDependencies]
+0=clipboard
