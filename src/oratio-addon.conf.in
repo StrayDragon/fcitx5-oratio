@@ -2,13 +2,13 @@
 Name=Oratio
 Category=Module
 Version=@PROJECT_VERSION@
-Library=liboratio
+Library=oratio
 Type=SharedLibrary
 OnDemand=False
 Configurable=True
 
 [Addon/Dependencies]
-0=core:@PROJECT_VERSION@
+0=core
 
 [Addon/OptionalDependencies]
 0=clipboard

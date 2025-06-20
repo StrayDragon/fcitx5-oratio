@@ -1,5 +1,6 @@
 add_library(oratio SHARED oratio.cpp)
 target_link_libraries(oratio PRIVATE Fcitx5::Core Fcitx5::Config)
+set_target_properties(oratio PROPERTIES PREFIX "")
 install(TARGETS oratio DESTINATION "${FCITX_INSTALL_ADDONDIR}")
 
 configure_file(oratio-addon.conf.in oratio-addon-configured.conf @ONLY)

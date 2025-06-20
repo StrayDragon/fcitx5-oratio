@@ -20,7 +20,7 @@ namespace fcitx {
 FCITX_CONFIGURATION(
     OratioConfig,
     Option<std::string> command{this, "Command", "Command to execute",
-                               "/home/l8ng/Kits/Apps/funasr/samples/rust/sample/target/release/rust_audio_client run --with-auto-input"};
+                               "oratio run"};
     KeyListOption triggerKey{this, "TriggerKey", "Trigger Key",
                            {Key("Control+Shift+Alt+E")}, KeyListConstrain()};
 );
